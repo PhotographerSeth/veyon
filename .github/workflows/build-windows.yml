@@ -12,7 +12,7 @@ jobs:
 
     steps:
       # -----------------------------------------------------------
-      # CHECKOUT SOURCE
+      # CHECKOUT
       # -----------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,13 +23,29 @@ jobs:
       # -----------------------------------------------------------
       # INSTALL DEPENDENCIES (LIBVNCSERVER) VIA VCPKG
       # -----------------------------------------------------------
-      # This fixes the "Could NOT find LibVNCClient" error by 
-      # installing a pre-compiled version instead of building it internally.
       - name: Install LibVNCServer via vcpkg
         shell: pwsh
         run: |
           vcpkg install libvncserver:x64-windows
           vcpkg install lzo:x64-windows
+
+      # -----------------------------------------------------------
+      # FIND VNC LIBRARY PATH (FIX FOR "NOT FOUND" ERROR)
+      # -----------------------------------------------------------
+      - name: Locate VNC Library
+        shell: pwsh
+        run: |
+          # Find the exact .lib file name (vncclient.lib or libvncclient.lib)
+          $libPath = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib"
+          $vncLib = Get-ChildItem -Path $libPath -Filter "*vncclient.lib" | Select-Object -First 1
+          
+          if ($vncLib) {
+            Write-Host "Found VNC Lib: $($vncLib.FullName)"
+            "VNC_LIB_PATH=$($vncLib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            Write-Error "Could not find vncclient.lib in $libPath"
+            exit 1
+          }
 
       # -----------------------------------------------------------
       # INSTALL QT 5.15.2
@@ -53,12 +69,12 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v4
 
       # -----------------------------------------------------------
-      # BUILD QCA (NO botan / NO pkgconfig / NO plugins)
+      # BUILD QCA
       # -----------------------------------------------------------
       - name: Clone QCA Source
         run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
 
-      - name: Configure QCA with CMake
+      - name: Configure QCA
         shell: pwsh
         run: |
           mkdir qca_build
@@ -84,7 +100,7 @@ jobs:
           ninja install
 
       # -----------------------------------------------------------
-      # PATCH VEYON TO FORCE Qt5 instead of Qt6
+      # PATCH VEYON
       # -----------------------------------------------------------
       - name: Patch Veyon CMakeLists for Qt5
         shell: pwsh
@@ -94,7 +110,7 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # CONFIGURE VEYON
+      # CONFIGURE VEYON (WITH FORCED LIB PATHS)
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh
@@ -105,7 +121,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" `
+            -DLibVNCClient_INCLUDE_DIR="$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/include" `
+            -DLibVNCClient_LIBRARIES="$env:VNC_LIB_PATH" `
             ..
 
       # -----------------------------------------------------------
@@ -117,7 +135,7 @@ jobs:
           ninja
 
       # -----------------------------------------------------------
-      # ARTIFACT OUTPUT
+      # ARTIFACTS
       # -----------------------------------------------------------
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4

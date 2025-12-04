@@ -144,31 +144,32 @@ endif()
 
 # find required Qt modules
 option(WITH_QT6 "Build for Qt 6" ON)
+set(QT_REQUIRED_COMPONENTS
+        Core
+        Concurrent
+        Gui
+        Widgets
+        Network)
+
 if(WITH_QT6)
-	set(QT_MAJOR_VERSION 6)
-	find_package(Qt6 COMPONENTS
-		Core
-		Core5Compat
-		Concurrent
-		Gui
-		Widgets
-		Network
-		REQUIRED)
-	if(WITH_TRANSLATIONS)
-		find_package(Qt6 COMPONENTS LinguistTools REQUIRED)
-	endif()
-else()
-	set(QT_MAJOR_VERSION 5)
-	find_package(Qt5 5.14 COMPONENTS
-		Core
-		Concurrent
-		Gui
-		Widgets
-		Network
-		REQUIRED)
-	if(WITH_TRANSLATIONS)
-		find_package(Qt5LinguistTools REQUIRED)
-	endif()
+        set(QT_MAJOR_VERSION 6)
+        find_package(Qt6 COMPONENTS Core5Compat ${QT_REQUIRED_COMPONENTS} QUIET)
+        if(Qt6_FOUND)
+                if(WITH_TRANSLATIONS)
+                        find_package(Qt6 COMPONENTS LinguistTools REQUIRED)
+                endif()
+        else()
+                message(WARNING "Qt6 was requested but not found. Falling back to Qt5. Set Qt6_DIR or CMAKE_PREFIX_PATH to use Qt6.")
+                set(WITH_QT6 OFF)
+        endif()
+endif()
+
+if(NOT WITH_QT6)
+        set(QT_MAJOR_VERSION 5)
+        find_package(Qt5 5.14 COMPONENTS ${QT_REQUIRED_COMPONENTS} REQUIRED)
+        if(WITH_TRANSLATIONS)
+                find_package(Qt5LinguistTools REQUIRED)
+        endif()
 endif()
 
 # find required libraries

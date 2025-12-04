@@ -105,6 +105,13 @@ As root you can run
              openssl-devel pam-devel procps-devel lzo-devel qca-devel qca-qt5-devel openldap-devel cyrus-sasl-devel
 
 
+Additional notes for Windows builds:
+
+- Install Qt, OpenSSL and QCA for the Qt version you are using (for example via vcpkg: `vcpkg install qtbase qca qttools`).
+- Add the vcpkg installation root (e.g. `C:/path/to/vcpkg/installed/x64-windows`) to `CMAKE_PREFIX_PATH` so that CMake can locate the package configuration files.
+- If CMake still cannot find QCA, explicitly set `Qca-qt5_DIR` or `Qca-qt6_DIR` to the `lib/cmake/Qca-qt*` directory inside your installation prefix.
+
+
 ### Configuring and building sources
 
 Run the following commands:

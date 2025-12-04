@@ -172,7 +172,12 @@ else()
 endif()
 
 # find required libraries
-find_package(Qca-qt${QT_MAJOR_VERSION} REQUIRED)
+set(QCA_PACKAGE Qca-qt${QT_MAJOR_VERSION})
+find_package(${QCA_PACKAGE} CONFIG)
+if(NOT ${QCA_PACKAGE}_FOUND)
+        message(FATAL_ERROR "Qt Cryptographic Architecture (${QCA_PACKAGE}) not found. Install QCA for Qt${QT_MAJOR_VERSION} and set ${QCA_PACKAGE}_DIR or CMAKE_PREFIX_PATH (for example the vcpkg \"installed/<triplet>\" directory) accordingly.")
+endif()
+
 find_package(OpenSSL REQUIRED)
 
 # find Linux-specific packages

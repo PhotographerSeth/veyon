@@ -33,7 +33,8 @@ jobs:
 
       # --- START NEW STEPS FOR QCA DEPENDENCY ---
       - name: Clone QCA Source
-        run: git clone https://github.com/KDAB/qca.git qca_src
+        # FIXED: Switched to the official KDE GitHub mirror and added depth=1 for speed
+        run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
 
       - name: Configure QCA with CMake
         # Use the same CMAKE_PREFIX_PATH as Veyon to find Qt and install QCA into a temporary dir
@@ -45,6 +46,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }}" ^
             -DWITH_openssl=runtime ^
             -DQCA_ENABLE_PLUGINS=NO ^
+            -DBUILD_TESTS=OFF ^
             ../qca_src
 
       - name: Build and Install QCA

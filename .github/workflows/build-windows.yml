@@ -11,8 +11,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (with tags)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Qt 5.15.2
         id: install-qt
@@ -33,10 +35,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -G "Ninja" ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/msvc2019_64" ^
-            ..
+          cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/msvc2019_64" ..
 
       - name: Build Veyon
         run: |

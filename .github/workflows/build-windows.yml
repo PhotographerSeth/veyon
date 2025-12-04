@@ -21,20 +21,54 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # PREPARE VCPKG (Force Classic Mode)
+      # CRITICAL FIX: FORCE CLASSIC MODE
       # -----------------------------------------------------------
-      - name: Prepare vcpkg (Force Classic Mode)
+      # Veyon ships with a vcpkg.json file. If we don't delete it,
+      # vcpkg ignores our install commands and hides libraries in a
+      # local folder. Deleting it forces the standard global install.
+      - name: Force Classic Mode (Delete vcpkg.json)
         shell: pwsh
         run: |
-          # Remove vcpkg.json to prevent Manifest Mode (which hides libraries)
           if (Test-Path "vcpkg.json") {
             Remove-Item "vcpkg.json" -Force
             Write-Host "Removed vcpkg.json to force global installation."
           }
-          
-          # Install Dependencies
+
+      # -----------------------------------------------------------
+      # INSTALL DEPENDENCIES
+      # -----------------------------------------------------------
+      - name: Install Dependencies via vcpkg
+        shell: pwsh
+        run: |
+          # Install libraries to the global C:\vcpkg location
           vcpkg install libvncserver:x64-windows
           vcpkg install lzo:x64-windows
+          
+          # DEBUG: List the installed files so we can see the exact names
+          $libPath = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib"
+          Write-Host "Listing files in $libPath"
+          Get-ChildItem $libPath | Select-Object Name
+
+      # -----------------------------------------------------------
+      # DYNAMICALLY FIND VNC LIBRARY
+      # -----------------------------------------------------------
+      # This script searches for *vnc*client.lib to handle naming variations
+      # (e.g., vncclient.lib vs libvncclient.lib) automatically.
+      - name: Locate VNC Library
+        shell: pwsh
+        run: |
+          $root = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib"
+          
+          # Find any file matching *vnc*client.lib
+          $vncLib = Get-ChildItem -Path $root -Filter "*vnc*client.lib" | Select-Object -First 1
+
+          if ($vncLib) {
+              Write-Host "FOUND LIBRARY: $($vncLib.FullName)"
+              "VNC_LIB_PATH=$($vncLib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+              Write-Error "Could not find any VNC client library in $root"
+              exit 1
+          }
 
       # -----------------------------------------------------------
       # INSTALL QT 5.15.2
@@ -99,7 +133,7 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # CONFIGURE VEYON
+      # CONFIGURE VEYON (WITH FORCED PATHS)
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh
@@ -111,6 +145,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" `
+            -DLibVNCClient_INCLUDE_DIR="$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/include" `
+            -DLibVNCClient_LIBRARIES="$env:VNC_LIB_PATH" `
             ..
 
       # -----------------------------------------------------------

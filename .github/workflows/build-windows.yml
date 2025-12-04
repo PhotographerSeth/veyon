@@ -1,84 +1,14 @@
-name: Build Veyon on Windows
-
-on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
-
-jobs:
-  build:
-    runs-on: windows-latest
-
-    steps:
+# -----------------------------------------------------------
+      # INSTALL DEPENDENCIES (LIBVNCSERVER) VIA VCPKG
       # -----------------------------------------------------------
-      # CHECKOUT SOURCE
-      # -----------------------------------------------------------
-      - name: Checkout repository (with tags + submodules)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      # -----------------------------------------------------------
-      # INSTALL QT 5.15.2
-      # -----------------------------------------------------------
-      - name: Install Qt 5.15.2
-        id: install-qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: 5.15.2
-          host: windows
-          target: desktop
-          arch: win64_msvc2019_64
-
-      # -----------------------------------------------------------
-      # SETUP MSVC + NINJA
-      # -----------------------------------------------------------
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v4
-
-      # -----------------------------------------------------------
-      # BUILD QCA (NO botan / NO pkgconfig / NO plugins)
-      # -----------------------------------------------------------
-      - name: Clone QCA Source
-        run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
-
-      - name: Configure QCA with CMake
+      - name: Install LibVNCServer via vcpkg
+        run: |
+          vcpkg install libvncserver:x64-windows
+          vcpkg install lzo:x64-windows
         shell: pwsh
-        run: |
-          mkdir qca_build
-          cd qca_build
-          cmake -G "Ninja" `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/qca-install" `
-            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }}" `
-            -DBUILD_PLUGINS=OFF `
-            -DQCA_FEATURE_BOTAN=OFF `
-            -DQCA_FEATURE_OPENSSL=OFF `
-            -DQCA_FEATURE_PKCS11=OFF `
-            -DQCA_FEATURE_GNUPG=OFF `
-            -DQCA_FEATURE_NSS=OFF `
-            -DQCA_FEATURE_GCRYPT=OFF `
-            -DBUILD_TESTS=OFF `
-            ../qca_src
-
-      - name: Build and Install QCA
-        run: |
-          cd qca_build
-          ninja
-          ninja install
-
-      - name: Add QCA to Build Environment
-        shell: pwsh
-        run: |
-          "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # -----------------------------------------------------------
-      # PATCH VEYON TO FORCE Qt5 instead of Qt6
+      # PATCH VEYON (Keep your existing patch)
       # -----------------------------------------------------------
       - name: Patch Veyon CMakeLists for Qt5
         shell: pwsh
@@ -88,7 +18,7 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # CONFIGURE VEYON (IMPORTANT FIX → DISABLE LIBVNC)
+      # CONFIGURE VEYON
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh
@@ -97,7 +27,8 @@ jobs:
           cd build
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DWITH_VNC=OFF `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
             ..
 
@@ -108,12 +39,3 @@ jobs:
         run: |
           cd build
           ninja
-
-      # -----------------------------------------------------------
-      # ARTIFACT OUTPUT
-      # -----------------------------------------------------------
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: veyon-windows-build
-          path: build/**

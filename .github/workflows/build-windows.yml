@@ -14,7 +14,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Qt 5.15.2 (MSVC2019)
+      - name: Install Qt 5.15.2
+        id: install-qt
         uses: jurplel/install-qt-action@v4
         with:
           version: 5.15.2
@@ -22,17 +23,20 @@ jobs:
           target: desktop
           arch: win64_msvc2019_64
 
-      - name: Setup MSVC Developer Command Prompt
+      - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v4
 
-      - name: Configure build with CMake (MSVC)
+      - name: Configure build with CMake
         run: |
           mkdir build
           cd build
-          cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%Qt5_DIR%" ..
+          cmake -G "Ninja" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/msvc2019_64" ^
+            ..
 
       - name: Build Veyon
         run: |

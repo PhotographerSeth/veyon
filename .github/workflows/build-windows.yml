@@ -1,4 +1,4 @@
-name: Debug Veyon Build
+name: Build Veyon on Windows
 
 on:
   push:
@@ -7,67 +7,147 @@ on:
     branches: ["main"]
 
 jobs:
-  debug_environment:
+  build:
     runs-on: windows-latest
+
     steps:
-      - name: Checkout
+      # -----------------------------------------------------------
+      # 1. CHECKOUT REPO
+      # -----------------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
-      # 1. REMOVE ANY EXISTING MANIFEST TO CLEAR CONFUSION
-      - name: Nuke vcpkg.json
+      # -----------------------------------------------------------
+      # 2. SETUP FRESH VCPKG (Bypass broken pre-installed version)
+      # -----------------------------------------------------------
+      - name: Setup Fresh vcpkg
         shell: pwsh
         run: |
-          if (Test-Path "vcpkg.json") { 
-            Remove-Item "vcpkg.json" -Force 
-            Write-Host "Deleted repository vcpkg.json to ensure clean slate."
-          }
-
-      # 2. INSTALL DEPENDENCIES (Classic Mode)
-      - name: Install LibVNCServer
-        shell: pwsh
-        run: |
-          Write-Host "Installing dependencies..."
-          vcpkg install libvncserver:x64-windows
-          vcpkg install lzo:x64-windows
-
-      # 3. THE "RECONNAISSANCE" STEP
-      - name: Run Diagnostics
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host " ENVIRONMENT VARIABLES"
-          Write-Host "=========================================="
-          dir env:VCPKG* | Format-Table -AutoSize
-
-          Write-Host "`n=========================================="
-          Write-Host " VCPKG STATUS"
-          Write-Host "=========================================="
-          vcpkg list
-
-          Write-Host "`n=========================================="
-          Write-Host " FILE SYSTEM SEARCH (Where are the .lib files?)"
-          Write-Host "=========================================="
-          # Search the ENTIRE vcpkg root for any .lib file to see where they are landing
-          $root = $env:VCPKG_INSTALLATION_ROOT
-          Write-Host "Searching inside: $root"
+          # Clone a fresh vcpkg to avoid system corruption
+          git clone https://github.com/microsoft/vcpkg.git win-vcpkg
+          cd win-vcpkg
+          .\bootstrap-vcpkg.bat
           
-          # Find all .lib files, but limit output to avoid log truncation
-          $files = Get-ChildItem -Path $root -Filter "*.lib" -Recurse -ErrorAction SilentlyContinue
+          # Install libraries (This will take a few minutes as it builds from scratch)
+          .\vcpkg.exe install libvncserver:x64-windows lzo:x64-windows openssl:x64-windows
+
+          # Set ENV variables for the next steps
+          $newRoot = "$(Get-Location)"
+          "VCPKG_ROOT=$newRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           
-          if ($files) {
-            Write-Host "Found $($files.Count) .lib files. Here are the first 20 related to VNC or LZO:"
-            $files | Where-Object { $_.Name -match "vnc|lzo" } | Select-Object -First 20 FullName
+          # Verify the library file actually exists now
+          $libFile = "$newRoot\installed\x64-windows\lib\vncclient.lib"
+          if (Test-Path $libFile) {
+             Write-Host "SUCCESS: Library verified at $libFile"
           } else {
-            Write-Host "CRITICAL: No .lib files found anywhere in VCPKG root!"
+             # Try alternative name
+             $libFileAlt = "$newRoot\installed\x64-windows\lib\libvncclient.lib"
+             if (Test-Path $libFileAlt) {
+                 Write-Host "SUCCESS: Library verified at $libFileAlt"
+             } else {
+                 Write-Error "FAILED: Library still not found after fresh build."
+                 exit 1
+             }
           }
 
-          Write-Host "`n=========================================="
-          Write-Host " SPECIFIC FOLDER CHECK"
-          Write-Host "=========================================="
-          $targetPath = "$root/installed/x64-windows/lib"
-          if (Test-Path $targetPath) {
-             Write-Host "Contents of $targetPath :"
-             Get-ChildItem $targetPath | Select-Object Name
-          } else {
-             Write-Host "Folder $targetPath does NOT exist."
-          }
+      # -----------------------------------------------------------
+      # 3. INSTALL QT 5.15.2
+      # -----------------------------------------------------------
+      - name: Install Qt 5.15.2
+        id: install-qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 5.15.2
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+
+      # -----------------------------------------------------------
+      # 4. SETUP MSVC + NINJA
+      # -----------------------------------------------------------
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v4
+
+      # -----------------------------------------------------------
+      # 5. BUILD QCA
+      # -----------------------------------------------------------
+      - name: Clone QCA Source
+        run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
+
+      - name: Configure QCA
+        shell: pwsh
+        run: |
+          mkdir qca_build
+          cd qca_build
+          cmake -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/qca-install" `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }}" `
+            -DBUILD_PLUGINS=OFF `
+            -DQCA_FEATURE_BOTAN=OFF `
+            -DQCA_FEATURE_OPENSSL=OFF `
+            -DQCA_FEATURE_PKCS11=OFF `
+            -DQCA_FEATURE_GNUPG=OFF `
+            -DQCA_FEATURE_NSS=OFF `
+            -DQCA_FEATURE_GCRYPT=OFF `
+            -DBUILD_TESTS=OFF `
+            ../qca_src
+
+      - name: Build and Install QCA
+        run: |
+          cd qca_build
+          ninja
+          ninja install
+
+      # -----------------------------------------------------------
+      # 6. PATCH VEYON
+      # -----------------------------------------------------------
+      - name: Patch Veyon CMakeLists for Qt5
+        shell: pwsh
+        run: |
+          $file = "CMakeLists.txt"
+          (Get-Content $file) -replace 'find_package\(Qt6', 'find_package(Qt5' | Set-Content $file
+          Write-Host "Patched Veyon to use Qt5."
+
+      # -----------------------------------------------------------
+      # 7. CONFIGURE VEYON (Using New VCPKG Root)
+      # -----------------------------------------------------------
+      - name: Configure Veyon Build
+        shell: pwsh
+        run: |
+          mkdir build
+          cd build
+          
+          # We use the new vcpkg root we just created
+          $vcpkgToolchain = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          $vcpkgInstalled = "$env:VCPKG_ROOT/installed/x64-windows"
+          
+          cmake -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$vcpkgToolchain" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install;$vcpkgInstalled" `
+            ..
+
+      # -----------------------------------------------------------
+      # 8. BUILD VEYON
+      # -----------------------------------------------------------
+      - name: Build Veyon
+        run: |
+          cd build
+          ninja
+
+      # -----------------------------------------------------------
+      # 9. ARTIFACTS
+      # -----------------------------------------------------------
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyon-windows-build
+          path: build/**

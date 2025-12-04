@@ -33,10 +33,12 @@ jobs:
 
       # --- START NEW STEPS FOR QCA DEPENDENCY ---
       - name: Clone QCA Source
+        # Cloning from the official KDE mirror
         run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
 
       - name: Configure QCA with CMake
-        # FIXED: Used backticks (`) instead of carets (^) for PowerShell line continuation
+        # FIXED: Added flags to disable unnecessary plugins (Botan, NSS, GCrypt)
+        # to prevent the "PkgConfig" error.
         run: |
           mkdir qca_build
           cd qca_build
@@ -44,6 +46,11 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/qca-install" `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }}" `
             -DWITH_openssl=runtime `
+            -DWITH_botan_plugin=no `
+            -DWITH_nss_plugin=no `
+            -DWITH_gcrypt_plugin=no `
+            -DWITH_pkcs11_plugin=no `
+            -DWITH_gnupg_plugin=no `
             -DQCA_ENABLE_PLUGINS=NO `
             -DBUILD_TESTS=OFF `
             ../qca_src
@@ -55,6 +62,7 @@ jobs:
           ninja install
 
       - name: Add QCA to Veyon's Prefix Path
+        # Updates CMAKE_PREFIX_PATH so Veyon can find the QCA we just built
         run: |
           echo "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "Updated CMAKE_PREFIX_PATH to include QCA install directory: ${{ runner.temp }}/qca-install"
@@ -76,3 +84,13 @@ jobs:
         with:
           name: veyon-windows-build
           path: build/**
+```
+
+### What I Changed:
+I added these lines to the `Configure QCA with CMake` step:
+```powershell
+-DWITH_botan_plugin=no `
+-DWITH_nss_plugin=no `
+-DWITH_gcrypt_plugin=no `
+-DWITH_pkcs11_plugin=no `
+-DWITH_gnupg_plugin=no `

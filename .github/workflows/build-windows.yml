@@ -21,6 +21,19 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
+      # DISABLE MANIFEST MODE (CRITICAL FIX)
+      # -----------------------------------------------------------
+      # Deleting vcpkg.json forces vcpkg to use the global installation
+      # directory (C:\vcpkg) instead of a local folder.
+      - name: Remove vcpkg.json to force Classic Mode
+        shell: pwsh
+        run: |
+          if (Test-Path "vcpkg.json") {
+            Remove-Item "vcpkg.json" -Force
+            Write-Host "Removed vcpkg.json to force global installation."
+          }
+
+      # -----------------------------------------------------------
       # INSTALL DEPENDENCIES (LIBVNCSERVER) VIA VCPKG
       # -----------------------------------------------------------
       - name: Install LibVNCServer via vcpkg
@@ -28,31 +41,24 @@ jobs:
         run: |
           vcpkg install libvncserver:x64-windows
           vcpkg install lzo:x64-windows
-          # Verify installation by listing installed packages
-          vcpkg list
+          # Verify files exist now
+          $checkPath = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib"
+          Write-Host "Checking contents of: $checkPath"
+          Get-ChildItem $checkPath | Select-Object -First 10 Name
 
       # -----------------------------------------------------------
-      # LOCATE VNC LIBRARY (ROBUST SEARCH)
+      # LOCATE VNC LIBRARY
       # -----------------------------------------------------------
       - name: Locate VNC Library
         shell: pwsh
         run: |
           $root = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib"
           
-          Write-Host "--- Debug: Listing files in $root ---"
-          if (Test-Path $root) {
-              Get-ChildItem -Path $root | Select-Object Name
-          } else {
-              Write-Error "Directory $root does not exist!"
-              exit 1
-          }
-          Write-Host "-------------------------------------"
-
-          # Search recursively for any library file resembling 'vncclient'
+          # Find vncclient.lib (or libvncclient.lib)
           $vncLib = Get-ChildItem -Path $root -Filter "*vncclient.lib" -Recurse | Select-Object -First 1
 
           if ($vncLib) {
-              Write-Host "SUCCESS: Found VNC Lib at $($vncLib.FullName)"
+              Write-Host "Found VNC Lib: $($vncLib.FullName)"
               "VNC_LIB_PATH=$($vncLib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           } else {
               Write-Error "FATAL: Could not find *vncclient.lib in $root"
@@ -122,7 +128,7 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # CONFIGURE VEYON
+      # CONFIGURE VEYON (WITH FORCED LIB PATHS)
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh

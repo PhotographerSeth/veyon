@@ -33,20 +33,19 @@ jobs:
 
       # --- START NEW STEPS FOR QCA DEPENDENCY ---
       - name: Clone QCA Source
-        # FIXED: Switched to the official KDE GitHub mirror and added depth=1 for speed
         run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
 
       - name: Configure QCA with CMake
-        # Use the same CMAKE_PREFIX_PATH as Veyon to find Qt and install QCA into a temporary dir
+        # FIXED: Used backticks (`) instead of carets (^) for PowerShell line continuation
         run: |
           mkdir qca_build
           cd qca_build
-          cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/qca-install" ^
-            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }}" ^
-            -DWITH_openssl=runtime ^
-            -DQCA_ENABLE_PLUGINS=NO ^
-            -DBUILD_TESTS=OFF ^
+          cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/qca-install" `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }}" `
+            -DWITH_openssl=runtime `
+            -DQCA_ENABLE_PLUGINS=NO `
+            -DBUILD_TESTS=OFF `
             ../qca_src
 
       - name: Build and Install QCA
@@ -56,15 +55,12 @@ jobs:
           ninja install
 
       - name: Add QCA to Veyon's Prefix Path
-        # This step updates the environment variable CMAKE_PREFIX_PATH to include QCA's installation path.
         run: |
-          $qca_path = "${{ runner.temp }}\qca-install\cmake"
           echo "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "Updated CMAKE_PREFIX_PATH to include QCA install directory: ${{ runner.temp }}/qca-install"
       # --- END NEW STEPS FOR QCA DEPENDENCY ---
 
       - name: Configure build with CMake
-        # CMAKE_PREFIX_PATH is now set in the environment from the previous step!
         run: |
           mkdir build
           cd build

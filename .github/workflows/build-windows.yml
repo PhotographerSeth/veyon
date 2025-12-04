@@ -21,7 +21,7 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # INSTALL QT
+      # INSTALL QT 5.15.2
       # -----------------------------------------------------------
       - name: Install Qt 5.15.2
         id: install-qt
@@ -42,18 +42,7 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v4
 
       # -----------------------------------------------------------
-      # INSTALL LibVNCServer / LibVNCClient VIA VCPKG
-      # (Prevents Veyon's internal LibVNC build from failing)
-      # -----------------------------------------------------------
-      - name: Install LibVNCServer via vcpkg
-        shell: pwsh
-        run: |
-          vcpkg install libvncserver:x64-windows
-          "CMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VCPKG_INSTALLED_DIR=C:/vcpkg/installed/x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      # -----------------------------------------------------------
-      # BUILD QCA (DISABLE ALL PLUGINS THAT REQUIRE PKGCONFIG)
+      # BUILD QCA WITHOUT BOTAN / NSS / GCRYPT / PKGCONFIG
       # -----------------------------------------------------------
       - name: Clone QCA Source
         run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
@@ -83,23 +72,24 @@ jobs:
           ninja
           ninja install
 
-      - name: Add QCA Path to Environment
+      - name: Add QCA to Build Environment
         shell: pwsh
         run: |
           "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # -----------------------------------------------------------
-      # PATCH VEYON TO FORCE Qt5 INSTEAD OF Qt6
+      # PATCH VEYON TO FORCE Qt5 (NOT Qt6)
       # -----------------------------------------------------------
-      - name: Patch Veyon CMakeLists to use Qt5
+      - name: Patch Veyon CMakeLists for Qt5
         shell: pwsh
         run: |
-          $cmakeFile = "CMakeLists.txt"
-          (Get-Content $cmakeFile) -replace 'find_package\(Qt6', 'find_package(Qt5' | Set-Content $cmakeFile
-          Write-Host "Patched CMakeLists.txt to force Qt5."
+          $file = "CMakeLists.txt"
+          (Get-Content $file) -replace 'find_package\(Qt6', 'find_package(Qt5' | Set-Content $file
+          Write-Host "Veyon is now patched to use Qt5."
 
       # -----------------------------------------------------------
-      # BUILD VEYON
+      # CONFIGURE VEYON BUILD
+      # KEY FIX → DISABLE LIBVNC
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh
@@ -108,17 +98,20 @@ jobs:
           cd build
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DWITH_LIBVNC=OFF `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
             ..
 
+      # -----------------------------------------------------------
+      # BUILD VEYON
+      # -----------------------------------------------------------
       - name: Build Veyon
         run: |
           cd build
           ninja
 
       # -----------------------------------------------------------
-      # ARTIFACTS
+      # ARTIFACT OUTPUT
       # -----------------------------------------------------------
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4

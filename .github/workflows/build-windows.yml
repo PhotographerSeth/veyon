@@ -42,7 +42,7 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v4
 
       # -----------------------------------------------------------
-      # BUILD QCA WITHOUT BOTAN / NSS / GCRYPT / PKGCONFIG
+      # BUILD QCA (NO botan / NO pkgconfig / NO plugins)
       # -----------------------------------------------------------
       - name: Clone QCA Source
         run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
@@ -78,18 +78,17 @@ jobs:
           "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # -----------------------------------------------------------
-      # PATCH VEYON TO FORCE Qt5 (NOT Qt6)
+      # PATCH VEYON TO FORCE Qt5 instead of Qt6
       # -----------------------------------------------------------
       - name: Patch Veyon CMakeLists for Qt5
         shell: pwsh
         run: |
           $file = "CMakeLists.txt"
           (Get-Content $file) -replace 'find_package\(Qt6', 'find_package(Qt5' | Set-Content $file
-          Write-Host "Veyon is now patched to use Qt5."
+          Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # CONFIGURE VEYON BUILD
-      # KEY FIX → DISABLE LIBVNC
+      # CONFIGURE VEYON (IMPORTANT FIX → DISABLE LIBVNC)
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh
@@ -98,7 +97,7 @@ jobs:
           cd build
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DWITH_LIBVNC=OFF `
+            -DWITH_VNC=OFF `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
             ..
 

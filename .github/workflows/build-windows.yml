@@ -11,11 +11,11 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (with tags)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive # Added to ensure Veyon's own bundled deps are present
+          submodules: recursive
 
       - name: Install Qt 5.15.2
         id: install-qt
@@ -32,26 +32,28 @@ jobs:
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v4
 
-      # --- QCA BUILD STEP (Fixed) ---
+      # -----------------------------------------------------------
+      # QCA BUILD (with botan/nss/gcrypt/test plugins disabled)
+      # -----------------------------------------------------------
       - name: Clone QCA Source
         run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
 
       - name: Configure QCA with CMake
-        # We explicitly DISABLE all plugins that require external dependencies (pkg-config)
-        # This fixes the "Could NOT find PkgConfig" error.
+        shell: pwsh
         run: |
           mkdir qca_build
           cd qca_build
-          cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release `
+          cmake -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/qca-install" `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }}" `
-            -DWITH_openssl=runtime `
-            -DWITH_botan_plugin=no `
-            -DWITH_nss_plugin=no `
-            -DWITH_gcrypt_plugin=no `
-            -DWITH_pkcs11_plugin=no `
-            -DWITH_gnupg_plugin=no `
-            -DQCA_ENABLE_PLUGINS=NO `
+            -DBUILD_PLUGINS=OFF `
+            -DQCA_FEATURE_BOTAN=OFF `
+            -DQCA_FEATURE_OPENSSL=OFF `
+            -DQCA_FEATURE_PKCS11=OFF `
+            -DQCA_FEATURE_GNUPG=OFF `
+            -DQCA_FEATURE_NSS=OFF `
+            -DQCA_FEATURE_GCRYPT=OFF `
             -DBUILD_TESTS=OFF `
             ../qca_src
 
@@ -61,21 +63,23 @@ jobs:
           ninja
           ninja install
 
-      - name: Add QCA to Veyon's Prefix Path
+      - name: Add QCA Path to Environment
+        shell: pwsh
         run: |
           echo "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      # --- END QCA STEP ---
 
-      # --- VEYON BUILD STEP ---
-      - name: Patch Veyon CMakeLists (Qt6 -> Qt5)
-        # We patch Veyon to accept our Qt 5 environment
+      # -----------------------------------------------------------
+      # VEYON BUILD
+      # -----------------------------------------------------------
+
+      - name: Patch Veyon CMakeLists to force Qt5 instead of Qt6
         shell: pwsh
         run: |
           $cmakeFile = "CMakeLists.txt"
           (Get-Content $cmakeFile) -replace 'find_package\(Qt6', 'find_package(Qt5' | Set-Content $cmakeFile
-          echo "Patched CMakeLists.txt to use Qt5"
+          Write-Host "Patched to use Qt5."
 
-      - name: Configure build with CMake
+      - name: Configure Veyon Build
         run: |
           mkdir build
           cd build

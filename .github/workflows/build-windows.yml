@@ -11,12 +11,18 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository (with tags)
+      # -----------------------------------------------------------
+      # CHECKOUT SOURCE
+      # -----------------------------------------------------------
+      - name: Checkout repository (with tags + submodules)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
 
+      # -----------------------------------------------------------
+      # INSTALL QT
+      # -----------------------------------------------------------
       - name: Install Qt 5.15.2
         id: install-qt
         uses: jurplel/install-qt-action@v4
@@ -26,6 +32,9 @@ jobs:
           target: desktop
           arch: win64_msvc2019_64
 
+      # -----------------------------------------------------------
+      # SETUP MSVC + NINJA
+      # -----------------------------------------------------------
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -33,7 +42,18 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v4
 
       # -----------------------------------------------------------
-      # QCA BUILD (with botan/nss/gcrypt/test plugins disabled)
+      # INSTALL LibVNCServer / LibVNCClient VIA VCPKG
+      # (Prevents Veyon's internal LibVNC build from failing)
+      # -----------------------------------------------------------
+      - name: Install LibVNCServer via vcpkg
+        shell: pwsh
+        run: |
+          vcpkg install libvncserver:x64-windows
+          "CMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_INSTALLED_DIR=C:/vcpkg/installed/x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # -----------------------------------------------------------
+      # BUILD QCA (DISABLE ALL PLUGINS THAT REQUIRE PKGCONFIG)
       # -----------------------------------------------------------
       - name: Clone QCA Source
         run: git clone --depth 1 --branch master https://github.com/KDE/qca.git qca_src
@@ -66,30 +86,40 @@ jobs:
       - name: Add QCA Path to Environment
         shell: pwsh
         run: |
-          echo "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CMAKE_PREFIX_PATH=${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}\qca-install;${{ runner.temp }}\qca-install\lib\cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # -----------------------------------------------------------
-      # VEYON BUILD
+      # PATCH VEYON TO FORCE Qt5 INSTEAD OF Qt6
       # -----------------------------------------------------------
-
-      - name: Patch Veyon CMakeLists to force Qt5 instead of Qt6
+      - name: Patch Veyon CMakeLists to use Qt5
         shell: pwsh
         run: |
           $cmakeFile = "CMakeLists.txt"
           (Get-Content $cmakeFile) -replace 'find_package\(Qt6', 'find_package(Qt5' | Set-Content $cmakeFile
-          Write-Host "Patched to use Qt5."
+          Write-Host "Patched CMakeLists.txt to force Qt5."
 
+      # -----------------------------------------------------------
+      # BUILD VEYON
+      # -----------------------------------------------------------
       - name: Configure Veyon Build
+        shell: pwsh
         run: |
           mkdir build
           cd build
-          cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release ..
+          cmake -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
+            ..
 
       - name: Build Veyon
         run: |
           cd build
           ninja
 
+      # -----------------------------------------------------------
+      # ARTIFACTS
+      # -----------------------------------------------------------
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:

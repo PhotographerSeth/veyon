@@ -21,43 +21,32 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. SETUP PINNED VCPKG (THE FIX)
+      # 2. ISOLATED VCPKG INSTALLATION
       # -----------------------------------------------------------
-      - name: Setup Pinned vcpkg (Restore LibVNCServer)
+      # We clone vcpkg to C:\vcpkg_libs (OUTSIDE the source tree)
+      # to prevent it from detecting veyon/vcpkg.json and breaking.
+      - name: Setup Isolated vcpkg
         shell: pwsh
         run: |
-          # Clone vcpkg
-          git clone https://github.com/microsoft/vcpkg.git win-vcpkg
-          cd win-vcpkg
+          $workDir = "C:\vcpkg_libs"
+          New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+          cd $workDir
 
-          # CRITICAL FIX: Checkout a specific tag from 2024.
-          # This ensures we use a version of the registry where 
-          # libvncserver still exists and hasn't been removed/renamed.
-          Write-Host "Pinning vcpkg to 2024.04.26 release..."
+          Write-Host "Cloning vcpkg to isolated directory: $workDir"
+          git clone https://github.com/microsoft/vcpkg.git .
+          
+          # Use the stable 2024 release to ensure libvncserver is available
           git checkout 2024.04.26
-
-          # Bootstrap and Install
+          
           .\bootstrap-vcpkg.bat
+          
+          # Install dependencies explicitly
+          Write-Host "Installing libraries..."
           .\vcpkg.exe install libvncserver:x64-windows lzo:x64-windows openssl:x64-windows
 
-          # Set ENV variables for the next steps
-          $newRoot = "$(Get-Location)"
-          "VCPKG_ROOT=$newRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          
-          # Verify the library file exists now
-          $libFile = "$newRoot\installed\x64-windows\lib\vncclient.lib"
-          if (Test-Path $libFile) {
-             Write-Host "SUCCESS: Library restored at $libFile"
-          } else {
-             # Check alternative name just in case
-             $libFileAlt = "$newRoot\installed\x64-windows\lib\libvncclient.lib"
-             if (Test-Path $libFileAlt) {
-                 Write-Host "SUCCESS: Library restored at $libFileAlt"
-             } else {
-                 Write-Error "FAILED: Library still missing. This shouldn't happen on pinned version."
-                 exit 1
-             }
-          }
+          # Save paths for next steps
+          "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_INSTALLED=$workDir\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # -----------------------------------------------------------
       # 3. INSTALL QT 5.15.2
@@ -122,7 +111,7 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # 7. CONFIGURE VEYON
+      # 7. CONFIGURE VEYON (Using Isolated VCPKG)
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh
@@ -130,15 +119,14 @@ jobs:
           mkdir build
           cd build
           
-          # Use our custom pinned vcpkg root
-          $vcpkgToolchain = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-          $vcpkgInstalled = "$env:VCPKG_ROOT/installed/x64-windows"
+          # Point CMake explicitly to our isolated vcpkg toolchain
+          $toolchain = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$vcpkgToolchain" `
+            -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install;$vcpkgInstalled" `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install;$env:VCPKG_INSTALLED" `
             ..
 
       # -----------------------------------------------------------

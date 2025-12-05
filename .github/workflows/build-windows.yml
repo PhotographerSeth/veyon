@@ -21,10 +21,8 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. DELETE MANIFEST (CRITICAL FIX)
+      # 2. DELETE REPO MANIFEST
       # -----------------------------------------------------------
-      # We delete vcpkg.json to stop CMake from trying to "smartly"
-      # resolve dependencies using the broken baseline.
       - name: Nuke vcpkg.json
         shell: pwsh
         run: |
@@ -34,41 +32,54 @@ jobs:
           }
 
       # -----------------------------------------------------------
-      # 3. SETUP VCPKG (Clean Clone + 2024 Snapshot)
+      # 3. SETUP VCPKG (With File Repair)
       # -----------------------------------------------------------
       - name: Setup VCPKG and Install Libs
         shell: pwsh
         run: |
-          # 1. Disable Auto-CRLF to prevent "port does not exist" errors
-          git config --global core.autocrlf false
-          
-          # 2. Prepare Directory
-          $workDir = "C:\vcpkg_custom"
+          # 1. Prepare Directory
+          $workDir = "C:\vcpkg_clean"
           New-Item -ItemType Directory -Force -Path $workDir | Out-Null
           cd $workDir
           
-          # 3. Clone VCPKG (April 2024 Release)
-          # We pin to this specific tag where we know libvncserver works.
-          Write-Host "Cloning vcpkg (2024.04.26)..."
+          # 2. Clone VCPKG (Master branch usually works if files are clean)
+          Write-Host "Cloning vcpkg..."
           git clone -c core.autocrlf=false https://github.com/microsoft/vcpkg.git .
-          git checkout 2024.04.26
           
-          # 4. Bootstrap
+          # 3. Bootstrap
           .\bootstrap-vcpkg.bat
           
-          # 5. Manual Install (No Manifests involved)
+          # -------------------------------------------------------
+          # THE FIX: REPAIR THE PORT FILES
+          # -------------------------------------------------------
+          # We force the config files for libvncserver to have LF endings and UTF8 encoding.
+          $portDir = "ports\libvncserver"
+          Write-Host "Sanitizing port files in $portDir ..."
+          
+          if (Test-Path $portDir) {
+             Get-ChildItem $portDir -File | ForEach-Object {
+                $content = Get-Content $_.FullName -Raw
+                # Force Unix Line Endings (\n) instead of Windows (\r\n)
+                $content = $content.Replace("`r`n", "`n")
+                # Save back as UTF8 without BOM (Best for vcpkg)
+                [System.IO.File]::WriteAllText($_.FullName, $content)
+                Write-Host " - Repaired: $($_.Name)"
+             }
+          } else {
+             Write-Error "Port directory $portDir NOT FOUND. The port might have been renamed."
+             # List ports starting with libvnc just in case
+             Get-ChildItem ports | Where-Object { $_.Name -like "*vnc*" } | Select-Object Name
+             exit 1
+          }
+
+          # -------------------------------------------------------
+          # 4. INSTALL
+          # -------------------------------------------------------
           Write-Host "Installing Libraries..."
           .\vcpkg.exe install libvncserver:x64-windows lzo:x64-windows openssl:x64-windows
 
-          # 6. Save paths for CMake
+          # 5. Save paths for CMake
           "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          
-          # Verify installation (Just to be sure)
-          if (Test-Path "$workDir\installed\x64-windows\lib\vncclient.lib") {
-            Write-Host "VERIFIED: vncclient.lib exists!"
-          } else {
-            Write-Host "WARNING: vncclient.lib checked but exact name might vary."
-          }
 
       # -----------------------------------------------------------
       # 4. INSTALL QT 5.15.2
@@ -141,14 +152,10 @@ jobs:
           mkdir build
           cd build
           
-          # Force CMake to use OUR vcpkg, not the system one.
-          $toolchain = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-          
-          # We pass CMAKE_TOOLCHAIN_FILE so it finds our manually installed libs.
-          # Since vcpkg.json is gone, it won't try to download anything else.
+          # Pass Toolchain File + Prefix Path
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
             ..

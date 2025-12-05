@@ -21,7 +21,7 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. SETUP VCPKG (FIXED FOR LINE ENDINGS)
+      # 2. SETUP VCPKG (Clean Clone + Git Config Fix)
       # -----------------------------------------------------------
       - name: Setup VCPKG (Clean Clone)
         shell: pwsh
@@ -44,18 +44,17 @@ jobs:
           "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # -----------------------------------------------------------
-      # 3. CREATE MANIFEST (vcpkg.json)
+      # 3. CREATE MANIFEST (vcpkg.json) - FIXED SYNTAX
       # -----------------------------------------------------------
-      # We overwrite the repo's vcpkg.json with a clean one that we know works.
-      # This forces Manifest Mode to install exactly what we list here.
       - name: Create Clean Manifest
         shell: pwsh
         run: |
+          # PowerShell requires quotes around keys with hyphens
           $manifest = @{
-            name = "veyon-deps"
-            version-string = "1.0.0"
-            builtin-baseline = "35b5d195973e4b789133499e74d6d628d085600c" # Pin to a known stable commit
-            dependencies = @(
+            "name" = "veyon-deps";
+            "version-string" = "1.0.0";
+            "builtin-baseline" = "35b5d195973e4b789133499e74d6d628d085600c";
+            "dependencies" = @(
               "libvncserver",
               "lzo",
               "openssl"
@@ -130,13 +129,13 @@ jobs:
       # -----------------------------------------------------------
       # 8. CONFIGURE VEYON
       # -----------------------------------------------------------
-      # We rely on the vcpkg toolchain to read our `vcpkg.json` and install dependencies.
       - name: Configure Veyon Build
         shell: pwsh
         run: |
           mkdir build
           cd build
           
+          # VCPKG Toolchain will now read our valid vcpkg.json
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `

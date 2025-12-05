@@ -21,44 +21,49 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. NUKE EXISTING MANIFEST (CRITICAL)
+      # 2. SETUP VCPKG (FIXED FOR LINE ENDINGS)
       # -----------------------------------------------------------
-      - name: Remove vcpkg.json (Prevent Manifest Mode)
+      - name: Setup VCPKG (Clean Clone)
         shell: pwsh
         run: |
-          if (Test-Path "vcpkg.json") {
-            Remove-Item "vcpkg.json" -Force
-            Write-Host "DELETED vcpkg.json - We are taking manual control."
-          }
-
-      # -----------------------------------------------------------
-      # 3. SETUP PINNED VCPKG & INSTALL DEPS
-      # -----------------------------------------------------------
-      - name: Setup VCPKG and Install Libs
-        shell: pwsh
-        run: |
-          # 1. Setup isolated vcpkg directory
-          $workDir = "C:\vcpkg_manual"
+          # Fix Git Line Endings (CRLF) which can corrupt vcpkg ports on Windows
+          git config --global core.autocrlf false
+          
+          # Clone fresh vcpkg to a clean path
+          $workDir = "C:\vcpkg_clean"
           New-Item -ItemType Directory -Force -Path $workDir | Out-Null
           cd $workDir
-
-          # 2. Clone vcpkg and Checkout April 2024 (When libvncserver existed)
+          
+          Write-Host "Cloning vcpkg (Master)..."
           git clone https://github.com/microsoft/vcpkg.git .
-          git checkout 2024.04.26
           
-          # 3. Bootstrap
+          # Bootstrap
           .\bootstrap-vcpkg.bat
-
-          # 4. Install Dependencies
-          Write-Host "Installing LibVNCServer and LZO..."
-          .\vcpkg.exe install libvncserver:x64-windows lzo:x64-windows openssl:x64-windows
-
-          # 5. EXPORT PORTS FOR CMAKE
-          # This is the path where vcpkg puts the Config.cmake files
-          $installPath = "$workDir\installed\x64-windows"
-          "VCPKG_INSTALLED_PATH=$installPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           
-          Write-Host "Libraries installed to: $installPath"
+          # Register path for CMake
+          "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # -----------------------------------------------------------
+      # 3. CREATE MANIFEST (vcpkg.json)
+      # -----------------------------------------------------------
+      # We overwrite the repo's vcpkg.json with a clean one that we know works.
+      # This forces Manifest Mode to install exactly what we list here.
+      - name: Create Clean Manifest
+        shell: pwsh
+        run: |
+          $manifest = @{
+            name = "veyon-deps"
+            version-string = "1.0.0"
+            builtin-baseline = "35b5d195973e4b789133499e74d6d628d085600c" # Pin to a known stable commit
+            dependencies = @(
+              "libvncserver",
+              "lzo",
+              "openssl"
+            )
+          }
+          $manifest | ConvertTo-Json | Set-Content "vcpkg.json"
+          Write-Host "Created vcpkg.json:"
+          Get-Content "vcpkg.json"
 
       # -----------------------------------------------------------
       # 4. INSTALL QT 5.15.2
@@ -123,20 +128,20 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # 8. CONFIGURE VEYON (MANUAL PREFIX PATH)
+      # 8. CONFIGURE VEYON
       # -----------------------------------------------------------
+      # We rely on the vcpkg toolchain to read our `vcpkg.json` and install dependencies.
       - name: Configure Veyon Build
         shell: pwsh
         run: |
           mkdir build
           cd build
           
-          # We manually add our Custom VCPKG path to CMAKE_PREFIX_PATH.
-          # This tells find_package() exactly where to look, bypassing the toolchain logic.
-          
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install;$env:VCPKG_INSTALLED_PATH" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
             ..
 
       # -----------------------------------------------------------

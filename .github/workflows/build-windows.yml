@@ -21,59 +21,54 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. SETUP VCPKG (Clean Clone + Dynamic Baseline)
+      # 2. DELETE MANIFEST (CRITICAL FIX)
       # -----------------------------------------------------------
-      - name: Setup VCPKG
+      # We delete vcpkg.json to stop CMake from trying to "smartly"
+      # resolve dependencies using the broken baseline.
+      - name: Nuke vcpkg.json
         shell: pwsh
         run: |
-          # 1. Fix Git Line Endings (CRLF) to prevent corruption
+          if (Test-Path "vcpkg.json") {
+            Remove-Item "vcpkg.json" -Force
+            Write-Host "DELETED vcpkg.json -> Switching to Manual Mode."
+          }
+
+      # -----------------------------------------------------------
+      # 3. SETUP VCPKG (Clean Clone + 2024 Snapshot)
+      # -----------------------------------------------------------
+      - name: Setup VCPKG and Install Libs
+        shell: pwsh
+        run: |
+          # 1. Disable Auto-CRLF to prevent "port does not exist" errors
           git config --global core.autocrlf false
           
-          # 2. Clone fresh vcpkg to a clean path
-          $workDir = "C:\vcpkg_clean"
+          # 2. Prepare Directory
+          $workDir = "C:\vcpkg_custom"
           New-Item -ItemType Directory -Force -Path $workDir | Out-Null
           cd $workDir
           
-          Write-Host "Cloning vcpkg..."
-          git clone https://github.com/microsoft/vcpkg.git .
-          
-          # 3. Checkout a known stable release (April 2024)
-          # We know libvncserver works well in this version.
+          # 3. Clone VCPKG (April 2024 Release)
+          # We pin to this specific tag where we know libvncserver works.
+          Write-Host "Cloning vcpkg (2024.04.26)..."
+          git clone -c core.autocrlf=false https://github.com/microsoft/vcpkg.git .
           git checkout 2024.04.26
           
-          # 4. CAPTURE THE COMMIT HASH (The "Dynamic Baseline" Fix)
-          $vcpkgCommit = git rev-parse HEAD
-          Write-Host "Detected VCPKG Baseline Hash: $vcpkgCommit"
-          
-          # 5. Bootstrap
+          # 4. Bootstrap
           .\bootstrap-vcpkg.bat
           
-          # 6. Save Environment Variables for later steps
-          "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VCPKG_BASELINE=$vcpkgCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # 5. Manual Install (No Manifests involved)
+          Write-Host "Installing Libraries..."
+          .\vcpkg.exe install libvncserver:x64-windows lzo:x64-windows openssl:x64-windows
 
-      # -----------------------------------------------------------
-      # 3. CREATE DYNAMIC MANIFEST
-      # -----------------------------------------------------------
-      - name: Create Dynamic Manifest
-        shell: pwsh
-        run: |
-          # We create the vcpkg.json using the EXACT hash of the tool we just installed.
-          # This prevents the "not our ref" error.
-          $manifest = @{
-            "name" = "veyon-deps";
-            "version-string" = "1.0.0";
-            "builtin-baseline" = "$env:VCPKG_BASELINE";
-            "dependencies" = @(
-              "libvncserver",
-              "lzo",
-              "openssl"
-            )
-          }
-          $manifest | ConvertTo-Json | Set-Content "vcpkg.json"
+          # 6. Save paths for CMake
+          "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           
-          Write-Host "Generated vcpkg.json content:"
-          Get-Content "vcpkg.json"
+          # Verify installation (Just to be sure)
+          if (Test-Path "$workDir\installed\x64-windows\lib\vncclient.lib") {
+            Write-Host "VERIFIED: vncclient.lib exists!"
+          } else {
+            Write-Host "WARNING: vncclient.lib checked but exact name might vary."
+          }
 
       # -----------------------------------------------------------
       # 4. INSTALL QT 5.15.2
@@ -146,10 +141,14 @@ jobs:
           mkdir build
           cd build
           
-          # Use our custom vcpkg root
+          # Force CMake to use OUR vcpkg, not the system one.
+          $toolchain = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          
+          # We pass CMAKE_TOOLCHAIN_FILE so it finds our manually installed libs.
+          # Since vcpkg.json is gone, it won't try to download anything else.
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
             ..

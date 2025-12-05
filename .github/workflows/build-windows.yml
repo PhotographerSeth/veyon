@@ -21,32 +21,25 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. ISOLATED VCPKG INSTALLATION
+      # 2. SETUP FRESH VCPKG (BOOTSTRAP ONLY)
       # -----------------------------------------------------------
-      # We clone vcpkg to C:\vcpkg_libs (OUTSIDE the source tree)
-      # to prevent it from detecting veyon/vcpkg.json and breaking.
-      - name: Setup Isolated vcpkg
+      # We do NOT run 'vcpkg install'. We just prepare the tool.
+      # CMake will use this tool to read veyon/vcpkg.json later.
+      - name: Setup VCPKG Tool
         shell: pwsh
         run: |
-          $workDir = "C:\vcpkg_libs"
+          # 1. Clone a fresh vcpkg instance (outside source tree)
+          $workDir = "C:\vcpkg_tool"
           New-Item -ItemType Directory -Force -Path $workDir | Out-Null
           cd $workDir
-
-          Write-Host "Cloning vcpkg to isolated directory: $workDir"
           git clone https://github.com/microsoft/vcpkg.git .
           
-          # Use the stable 2024 release to ensure libvncserver is available
-          git checkout 2024.04.26
-          
+          # 2. Bootstrap (Build the vcpkg.exe executable)
           .\bootstrap-vcpkg.bat
-          
-          # Install dependencies explicitly
-          Write-Host "Installing libraries..."
-          .\vcpkg.exe install libvncserver:x64-windows lzo:x64-windows openssl:x64-windows
 
-          # Save paths for next steps
+          # 3. Register the path for CMake
           "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VCPKG_INSTALLED=$workDir\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "VCPKG Setup Complete at $workDir"
 
       # -----------------------------------------------------------
       # 3. INSTALL QT 5.15.2
@@ -111,22 +104,24 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # 7. CONFIGURE VEYON (Using Isolated VCPKG)
+      # 7. CONFIGURE VEYON (THE MANIFEST MODE FIX)
       # -----------------------------------------------------------
+      # We pass the toolchain file. CMake detects vcpkg.json in the
+      # source root, and AUTOMATICALLY downloads and installs 
+      # libvncserver and other deps into 'build/vcpkg_installed'.
       - name: Configure Veyon Build
         shell: pwsh
         run: |
           mkdir build
           cd build
           
-          # Point CMake explicitly to our isolated vcpkg toolchain
           $toolchain = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install;$env:VCPKG_INSTALLED" `
+            -DCMAKE_PREFIX_PATH="${{ steps.install-qt.outputs.qt_dir }};${{ runner.temp }}/qca-install" `
             ..
 
       # -----------------------------------------------------------

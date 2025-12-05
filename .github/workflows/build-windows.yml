@@ -21,34 +21,40 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. SETUP FRESH VCPKG (Bypass broken pre-installed version)
+      # 2. SETUP PINNED VCPKG (THE FIX)
       # -----------------------------------------------------------
-      - name: Setup Fresh vcpkg
+      - name: Setup Pinned vcpkg (Restore LibVNCServer)
         shell: pwsh
         run: |
-          # Clone a fresh vcpkg to avoid system corruption
+          # Clone vcpkg
           git clone https://github.com/microsoft/vcpkg.git win-vcpkg
           cd win-vcpkg
+
+          # CRITICAL FIX: Checkout a specific tag from 2024.
+          # This ensures we use a version of the registry where 
+          # libvncserver still exists and hasn't been removed/renamed.
+          Write-Host "Pinning vcpkg to 2024.04.26 release..."
+          git checkout 2024.04.26
+
+          # Bootstrap and Install
           .\bootstrap-vcpkg.bat
-          
-          # Install libraries (This will take a few minutes as it builds from scratch)
           .\vcpkg.exe install libvncserver:x64-windows lzo:x64-windows openssl:x64-windows
 
           # Set ENV variables for the next steps
           $newRoot = "$(Get-Location)"
           "VCPKG_ROOT=$newRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           
-          # Verify the library file actually exists now
+          # Verify the library file exists now
           $libFile = "$newRoot\installed\x64-windows\lib\vncclient.lib"
           if (Test-Path $libFile) {
-             Write-Host "SUCCESS: Library verified at $libFile"
+             Write-Host "SUCCESS: Library restored at $libFile"
           } else {
-             # Try alternative name
+             # Check alternative name just in case
              $libFileAlt = "$newRoot\installed\x64-windows\lib\libvncclient.lib"
              if (Test-Path $libFileAlt) {
-                 Write-Host "SUCCESS: Library verified at $libFileAlt"
+                 Write-Host "SUCCESS: Library restored at $libFileAlt"
              } else {
-                 Write-Error "FAILED: Library still not found after fresh build."
+                 Write-Error "FAILED: Library still missing. This shouldn't happen on pinned version."
                  exit 1
              }
           }
@@ -116,7 +122,7 @@ jobs:
           Write-Host "Patched Veyon to use Qt5."
 
       # -----------------------------------------------------------
-      # 7. CONFIGURE VEYON (Using New VCPKG Root)
+      # 7. CONFIGURE VEYON
       # -----------------------------------------------------------
       - name: Configure Veyon Build
         shell: pwsh
@@ -124,7 +130,7 @@ jobs:
           mkdir build
           cd build
           
-          # We use the new vcpkg root we just created
+          # Use our custom pinned vcpkg root
           $vcpkgToolchain = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           $vcpkgInstalled = "$env:VCPKG_ROOT/installed/x64-windows"
           

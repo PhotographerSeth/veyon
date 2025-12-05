@@ -21,39 +21,49 @@ jobs:
           submodules: recursive
 
       # -----------------------------------------------------------
-      # 2. SETUP VCPKG (Clean Clone + Git Config Fix)
+      # 2. SETUP VCPKG (Clean Clone + Dynamic Baseline)
       # -----------------------------------------------------------
-      - name: Setup VCPKG (Clean Clone)
+      - name: Setup VCPKG
         shell: pwsh
         run: |
-          # Fix Git Line Endings (CRLF) which can corrupt vcpkg ports on Windows
+          # 1. Fix Git Line Endings (CRLF) to prevent corruption
           git config --global core.autocrlf false
           
-          # Clone fresh vcpkg to a clean path
+          # 2. Clone fresh vcpkg to a clean path
           $workDir = "C:\vcpkg_clean"
           New-Item -ItemType Directory -Force -Path $workDir | Out-Null
           cd $workDir
           
-          Write-Host "Cloning vcpkg (Master)..."
+          Write-Host "Cloning vcpkg..."
           git clone https://github.com/microsoft/vcpkg.git .
           
-          # Bootstrap
+          # 3. Checkout a known stable release (April 2024)
+          # We know libvncserver works well in this version.
+          git checkout 2024.04.26
+          
+          # 4. CAPTURE THE COMMIT HASH (The "Dynamic Baseline" Fix)
+          $vcpkgCommit = git rev-parse HEAD
+          Write-Host "Detected VCPKG Baseline Hash: $vcpkgCommit"
+          
+          # 5. Bootstrap
           .\bootstrap-vcpkg.bat
           
-          # Register path for CMake
+          # 6. Save Environment Variables for later steps
           "VCPKG_ROOT=$workDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_BASELINE=$vcpkgCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # -----------------------------------------------------------
-      # 3. CREATE MANIFEST (vcpkg.json) - FIXED SYNTAX
+      # 3. CREATE DYNAMIC MANIFEST
       # -----------------------------------------------------------
-      - name: Create Clean Manifest
+      - name: Create Dynamic Manifest
         shell: pwsh
         run: |
-          # PowerShell requires quotes around keys with hyphens
+          # We create the vcpkg.json using the EXACT hash of the tool we just installed.
+          # This prevents the "not our ref" error.
           $manifest = @{
             "name" = "veyon-deps";
             "version-string" = "1.0.0";
-            "builtin-baseline" = "35b5d195973e4b789133499e74d6d628d085600c";
+            "builtin-baseline" = "$env:VCPKG_BASELINE";
             "dependencies" = @(
               "libvncserver",
               "lzo",
@@ -61,7 +71,8 @@ jobs:
             )
           }
           $manifest | ConvertTo-Json | Set-Content "vcpkg.json"
-          Write-Host "Created vcpkg.json:"
+          
+          Write-Host "Generated vcpkg.json content:"
           Get-Content "vcpkg.json"
 
       # -----------------------------------------------------------
@@ -135,7 +146,7 @@ jobs:
           mkdir build
           cd build
           
-          # VCPKG Toolchain will now read our valid vcpkg.json
+          # Use our custom vcpkg root
           cmake -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
